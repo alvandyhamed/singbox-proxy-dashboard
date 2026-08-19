@@ -96,6 +96,62 @@ Dashboard is available at `http://your-server:8787`.
 
 ---
 
+## Usage: Adding Your First VPN Subscription
+
+Once the dashboard is running, open it in your browser and log in. The core workflow is:
+
+### 1. Import a subscription
+
+Go to the **Subscriptions** tab. Paste your subscription URL (the link your VPN provider gives you — it usually starts with `https://` and returns a list of servers) and click **Add**.
+
+The dashboard fetches the URL, parses all servers, and stores them locally. Supported protocols: VLESS, VMess, Trojan, Hysteria2, TUIC, ShadowTLS, Shadowsocks, and more.
+
+### 2. Apply the subscription
+
+Click **Apply (validate + swap)**. The dashboard will:
+1. Generate a new sing-box config with all parsed servers
+2. Start it on a temporary port and run a connectivity test
+3. If the test passes, swap it in as the live config and restart sing-box
+4. If the test fails, roll back automatically — your current connection is never broken
+
+### 3. Pick a server (optional)
+
+By default, sing-box uses **Auto** mode and selects the fastest server. To pick a specific one:
+- Go to **Subscriptions → server list**
+- Click a server row to activate it
+- The latency badge updates in real time
+
+### 4. Configure routing rules
+
+Go to the **Rules** tab to control which traffic goes through the proxy and which goes direct.
+
+Add a rule:
+
+| Field | Example | Meaning |
+|---|---|---|
+| Type | `domain_suffix` | Match by domain ending |
+| Value | `google.com` | All subdomains of google.com |
+
+| Rule type | Matches |
+|---|---|
+| `domain_suffix` | `google.com` → matches `mail.google.com`, `www.google.com` |
+| `domain` | exact hostname only |
+| `domain_keyword` | any domain containing the keyword |
+| `ip_cidr` | an IP range, e.g. `10.0.0.0/8` |
+
+Rules are applied immediately after saving — no restart needed.
+
+### 5. Verify connectivity
+
+Check the **Status** page:
+- **SING-BOX** card shows `Active` in green
+- **Last Health Check** shows `OK` with a latency reading
+- **Live Throughput** chart shows traffic moving
+
+The status dot in the nav bar (green / yellow / red) gives you a quick health indicator at all times.
+
+---
+
 ## Bare-Metal Install (systemd)
 
 > Use this if you prefer running without Docker, e.g. on a router or SBC.
