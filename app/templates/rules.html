@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Rules — Proxy Dashboard{% endblock %}
+
+{% block body %}
+<div class="page-title">Routing Rules</div>
+
+<div class="alert" style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);color:#8b949e;margin-bottom:16px;font-size:12px">
+  ℹ Only apps configured to use <code>127.0.0.1:{{ proxy_port }}</code> as their SOCKS proxy are governed by these rules.
+  Apps that don't point at the proxy are unaffected.
+</div>
+
+{% if pending.count > 0 %}
+<div class="alert alert-yellow" style="display:flex;justify-content:space-between;align-items:center">
+  <span>⚠ {{ pending.count }} enabled rule(s) — pending restart to take effect.</span>
+  <button onclick="applyRules(this)" id="apply-btn">Apply &amp; Restart</button>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Add Rule</div>
+  <form class="inline" onsubmit="addRule(event)">
+    <div class="field">
+      <label>Type</label>
+      <select id="rule-kind" style="width:140px">
+        <option value="domain_suffix">domain_suffix — host &amp; subdomains</option>
+        <option value="domain">domain — exact match only</option>
+        <option value="domain_keyword">domain_keyword — substring</option>
+        <option value="ip_cidr">ip_cidr — IP range</option>
+      </select>
+    </div>
+    <div class="field" style="flex:1;min-width:200px">
+      <label>Value</label>
+      <input type="text" id="rule-value" placeholder="e.g. telegram.org" autocomplete="off">
+    </div>
+    <div class="field" style="flex:1;min-width:140px">
+      <label>Note (optional)</label>
+      <input type="text" id="rule-note" placeholder="e.g. for alerts">
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button type="submit">Add Rule</button>
+    </div>
+  </form>
+  <div id="add-error" style="display:none" class="err" style="margin-top:8px;font-size:12px"></div>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">{{ rules|length }} rule(s)</div>
+    {% if rules %}
+    <button class="btn-muted" onclick="applyRules(this)">Apply &amp; Restart</button>
+    {% endif %}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th><th>Value</th><th>Note</th><th>Enabled</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="rules-body">
+    {% for r in rules %}
+    <tr id="rule-{{ r.id }}">
+      <td><span class="badge badge-muted">{{ r.kind }}</span></td>
+      <td><code>{{ r.value }}</code></td>
+      <td class="muted">{{ r.note or '—' }}</td>
+      <td>
+        <input type="checkbox" {% if r.enabled %}checked{% endif %}
+               onchange="toggleRule({{ r.id }}, this.checked)">
+      </td>
+      <td>
+        <button class="btn-danger" style="padding:2px 8px;font-size:11px" onclick="deleteRule({{ r.id }}, this)">Delete</button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No rules yet. Unmatched traffic goes direct.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function addRule(e) {
+  e.preventDefault();
+  const kind = document.getElementById('rule-kind').value;
+  const value = document.getElementById('rule-value').value.trim();
+  const note = document.getElementById('rule-note').value.trim();
+  const errEl = document.getElementById('add-error');
+  if (!value) { errEl.style.display='block'; errEl.textContent='Value is required'; return; }
+  const r = await fetch('/api/rules', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({kind, value, note}),
+  });
+  const d = await r.json();
+  if (d.ok) { location.reload(); }
+  else { errEl.style.display='block'; errEl.textContent=d.error; }
+}
+
+async function toggleRule(id, enabled) {
+  await fetch(`/api/rules/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({enabled}),
+  });
+}
+
+async function deleteRule(id, btn) {
+  if (!confirm('Delete this rule?')) return;
+  btn.disabled = true;
+  const r = await fetch(`/api/rules/${id}`, { method: 'DELETE' });
+  const d = await r.json();
+  if (d.ok) document.getElementById(`rule-${id}`).remove();
+  else { btn.disabled = false; alert('Failed to delete'); }
+}
+
+async function applyRules(btn) {
+  if (!confirm('Apply rules? sing-box will restart, dropping all active connections.')) return;
+  btn.disabled = true;
+  btn.textContent = 'Applying…';
+  const r = await fetch('/api/rules/apply', { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false;
+  btn.textContent = 'Apply & Restart';
+  if (d.ok) {
+    alert('✓ Rules applied. sing-box restarted.');
+    location.reload();
+  } else {
+    alert('✕ Apply failed: ' + d.error + (d.rolled_back ? '\n(Rolled back to previous config)' : ''));
+  }
+}
+</script>
+{% endblock %}

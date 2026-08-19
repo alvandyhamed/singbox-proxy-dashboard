@@ -1,0 +1,5 @@
+# /etc/sudoers.d/dashboard   (mode 0440, validate with: visudo -c -f /etc/sudoers.d/dashboard)
+# Verify /bin/systemctl path with: which systemctl
+dashboard ALL=(root) NOPASSWD: /bin/systemctl restart sing-box
+dashboard ALL=(root) NOPASSWD: /bin/systemctl status sing-box
+dashboard ALL=(root) NOPASSWD: /bin/systemctl is-active sing-box

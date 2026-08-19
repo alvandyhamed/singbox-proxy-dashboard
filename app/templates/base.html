@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Proxy Dashboard{% endblock %}</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #e3b341;
+  --blue: #58a6ff;
+  --accent: #238636;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button, .btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  display: inline-block;
+}
+button:hover, .btn:hover { opacity: 0.85; }
+button.btn-danger { background: #b91c1c; }
+button.btn-muted { background: #21262d; border: 1px solid var(--border); }
+button.btn-muted:hover { background: var(--surface); }
+input, select, textarea {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  width: 100%;
+}
+input:focus, select:focus { outline: 2px solid var(--blue); border-color: transparent; }
+.layout { display: flex; min-height: 100vh; }
+nav {
+  width: 180px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+}
+nav .brand {
+  padding: 0 16px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+nav a {
+  display: block;
+  padding: 8px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+nav a:hover, nav a.active { color: var(--text); background: rgba(255,255,255,0.04); text-decoration: none; }
+nav a.active { border-left: 2px solid var(--blue); }
+nav .nav-footer {
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+.vpn-status {
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--muted); }
+.dot-green { background: var(--green); box-shadow: 0 0 4px rgba(63,185,80,.5); }
+.dot-yellow { background: var(--yellow); }
+.dot-red { background: var(--red); }
+main { flex: 1; padding: 24px; overflow: auto; }
+.page-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; color: #e6edf3; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.card-title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 6px 10px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: .05em; }
+td { padding: 7px 10px; border-bottom: 1px solid #21262d; font-size: 12px; vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.badge-green { background: rgba(63,185,80,.15); color: var(--green); }
+.badge-red { background: rgba(248,81,73,.15); color: var(--red); }
+.badge-yellow { background: rgba(227,179,65,.15); color: var(--yellow); }
+.badge-blue { background: rgba(88,166,255,.12); color: var(--blue); }
+.badge-muted { background: rgba(139,148,158,.12); color: var(--muted); }
+.alert {
+  padding: 8px 14px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.alert-yellow { background: rgba(227,179,65,.12); border: 1px solid rgba(227,179,65,.3); color: var(--yellow); }
+.alert-red { background: rgba(248,81,73,.12); border: 1px solid rgba(248,81,73,.3); color: var(--red); }
+.alert-green { background: rgba(63,185,80,.12); border: 1px solid rgba(63,185,80,.3); color: var(--green); }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.stat-val { font-size: 24px; font-weight: 600; color: #e6edf3; }
+.stat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.muted { color: var(--muted); }
+.ok { color: var(--green); }
+.err { color: var(--red); }
+.warn { color: var(--yellow); }
+form.inline { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+form.inline .field { display: flex; flex-direction: column; gap: 4px; }
+form.inline label { font-size: 11px; color: var(--muted); }
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="brand">⬡ Proxy</div>
+  <div class="vpn-status">
+    <span class="dot" id="vpn-dot"></span>
+    <span id="vpn-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
+  </div>
+  <a href="/" {% if request.url.path == '/' %}class="active"{% endif %}>Status</a>
+  <a href="/traffic" {% if request.url.path == '/traffic' %}class="active"{% endif %}>Traffic</a>
+  <a href="/servers" {% if request.url.path == '/servers' %}class="active"{% endif %}>Servers</a>
+  <a href="/rules" {% if request.url.path == '/rules' %}class="active"{% endif %}>Rules</a>
+  <a href="/subscriptions" {% if request.url.path == '/subscriptions' %}class="active"{% endif %}>Subscriptions</a>
+  <a href="/containers" {% if request.url.path == '/containers' %}class="active"{% endif %}>Containers</a>
+  <a href="/hermes" {% if request.url.path == '/hermes' %}class="active"{% endif %}>Hermes</a>
+  <div class="nav-footer">
+    <form method="POST" action="/logout">
+      <button class="btn-muted" style="width:100%">Logout</button>
+    </form>
+  </div>
+</nav>
+<main>
+{% block body %}{% endblock %}
+</main>
+</div>
+<script>
+(async function vpnPoll() {
+  try {
+    const d = await fetch('/api/status/quick').then(r => r.json());
+    const dot = document.getElementById('vpn-dot');
+    const lbl = document.getElementById('vpn-label');
+    if (d.active && d.server) {
+      dot.className = 'dot dot-green';
+      lbl.textContent = d.server.replace(/^sub\d+-/, '').replace(/-(\d+)$/, '');
+    } else if (d.active) {
+      dot.className = 'dot dot-yellow';
+      lbl.textContent = 'No server';
+    } else {
+      dot.className = 'dot dot-red';
+      lbl.textContent = 'VPN down';
+    }
+  } catch { }
+  setTimeout(vpnPoll, 30000);
+})();
+</script>
+</body>
+</html>

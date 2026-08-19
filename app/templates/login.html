@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login — Proxy Dashboard</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+.box {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 32px;
+  width: 320px;
+}
+h1 { font-size: 16px; margin-bottom: 20px; color: #e6edf3; }
+label { display: block; font-size: 11px; color: #8b949e; margin-bottom: 4px; }
+input[type=password] {
+  width: 100%;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+input[type=password]:focus { outline: 2px solid #58a6ff; border-color: transparent; }
+button {
+  width: 100%;
+  background: #238636;
+  color: #fff;
+  border: none;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+button:hover { background: #2ea043; }
+.error {
+  background: rgba(248,81,73,.12);
+  border: 1px solid rgba(248,81,73,.3);
+  color: #f85149;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>⬡ Proxy Dashboard</h1>
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+  <form method="POST" action="/login">
+    <label for="password">Password</label>
+    <input type="password" name="password" id="password" autofocus autocomplete="current-password">
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+</body>
+</html>

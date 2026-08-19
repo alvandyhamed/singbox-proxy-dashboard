@@ -1,0 +1,43 @@
+{
+  "log": { "level": "warn", "timestamp": true },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "local-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1080
+    },
+    {
+      "type": "mixed",
+      "tag": "docker-in",
+      "listen": "172.17.0.1",
+      "listen_port": 1080
+    }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "proxy" },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [{ "rule_set": "proxied", "outbound": "proxy" }],
+    "rule_set": [
+      {
+        "type": "local",
+        "tag": "proxied",
+        "format": "source",
+        "path": "/etc/sing-box/rules/proxied.json"
+      }
+    ],
+    "final": "direct"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "/var/lib/sing-box/cache.db"
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "secret": "change-me-clash-api-secret"
+    }
+  }
+}

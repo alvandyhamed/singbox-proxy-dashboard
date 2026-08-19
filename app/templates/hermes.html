@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+{% block title %}Hermes — Proxy Dashboard{% endblock %}
+
+{% block body %}
+<div class="page-title">Hermes Agent</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">Active Model</div>
+    <span id="active-badge" class="badge badge-green" style="display:none">Live</span>
+  </div>
+  <div id="active-model" class="muted" style="font-size:13px">Loading…</div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">All LLM Providers</div>
+    <button onclick="loadProviders()">↻ Refresh</button>
+  </div>
+  <table id="providers-table">
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Base URL</th>
+        <th>Active Model</th>
+        <th>API Key</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="providers-body">
+      <tr><td colspan="5" class="muted" style="text-align:center;padding:20px">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title">Add Custom Provider (OpenAI-compatible)</div>
+  <form class="inline" onsubmit="addProvider(event)" style="flex-wrap:wrap;gap:10px">
+    <div class="field" style="min-width:140px">
+      <label>Name</label>
+      <input id="p-name" placeholder="my-provider" required />
+    </div>
+    <div class="field" style="flex:1;min-width:200px">
+      <label>Base URL</label>
+      <input id="p-url" placeholder="https://api.openai.com/v1" required />
+    </div>
+    <div class="field" style="flex:1;min-width:180px">
+      <label>API Key</label>
+      <input id="p-key" type="password" placeholder="sk-…" required />
+    </div>
+    <div class="field" style="min-width:160px">
+      <label>Default Model (optional)</label>
+      <input id="p-model" placeholder="gpt-4o-mini" />
+    </div>
+    <div style="display:flex;align-items:flex-end;gap:8px">
+      <button type="submit">Add Provider</button>
+      <span id="add-msg" style="font-size:12px"></span>
+    </div>
+  </form>
+</div>
+
+<!-- Model picker modal -->
+<div id="model-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center">
+  <div class="card" style="width:520px;max-height:75vh;overflow-y:auto;position:relative">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div class="card-title" style="margin-bottom:0" id="modal-title">Select Model</div>
+      <button class="btn-muted" onclick="closeModal()">✕</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+let _cfg = null;
+
+const BUILTIN_PROVIDERS = [
+  {
+    name: 'gemini',
+    label: 'Google Gemini (built-in)',
+    base_url: 'https://generativelanguage.googleapis.com/v1beta',
+    builtin: true,
+    models: [
+      'gemini-2.5-flash-preview-05-20',
+      'gemini-2.5-pro-preview-06-05',
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-1.5-pro',
+      'gemini-1.5-flash',
+    ],
+  },
+];
+
+async function loadProviders() {
+  const r = await fetch('/api/hermes/config');
+  const d = await r.json();
+  _cfg = d;
+
+  // Active model card
+  const m = d.model || {};
+  const activeDiv = document.getElementById('active-model');
+  const badge = document.getElementById('active-badge');
+  if (m.provider) {
+    badge.style.display = '';
+    activeDiv.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-size:15px;font-weight:600;color:var(--fg)">${m.provider}</span>
+        <span class="badge badge-blue" style="font-size:13px">${m.default || '—'}</span>
+        <span class="muted" style="font-size:11px">${m.base_url || ''}</span>
+      </div>`;
+  } else {
+    badge.style.display = 'none';
+    activeDiv.innerHTML = '<span class="muted">Not configured</span>';
+  }
+
+  // Build combined provider list: built-in + custom
+  const customProviders = d.custom_providers || [];
+  const tbody = document.getElementById('providers-body');
+  const rows = [];
+
+  // Built-in providers
+  for (const bp of BUILTIN_PROVIDERS) {
+    const isActive = m.provider === bp.name;
+    rows.push(`<tr ${isActive ? 'style="background:rgba(88,166,255,.06)"' : ''}>
+      <td>
+        <span style="font-weight:500">${bp.label}</span>
+        ${isActive ? '<span class="badge badge-green" style="margin-left:6px">active</span>' : ''}
+      </td>
+      <td class="muted" style="font-size:11px">${bp.base_url}</td>
+      <td>${isActive ? `<span class="badge badge-blue">${m.default || '—'}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="muted" style="font-size:11px">env / config</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn-muted" style="font-size:11px;padding:2px 8px"
+          onclick="showBuiltinPicker('${bp.name}', ${JSON.stringify(bp.models)})">
+          ${isActive ? '⚙ Change' : '▶ Activate'}
+        </button>
+      </td>
+    </tr>`);
+  }
+
+  // Custom providers
+  for (const p of customProviders) {
+    const isActive = m.provider === p.name;
+    rows.push(`<tr ${isActive ? 'style="background:rgba(88,166,255,.06)"' : ''}>
+      <td>
+        <span style="font-weight:500">${p.name}</span>
+        ${isActive ? '<span class="badge badge-green" style="margin-left:6px">active</span>' : ''}
+      </td>
+      <td class="muted" style="font-size:11px">${p.base_url}</td>
+      <td>${isActive ? `<span class="badge badge-blue">${m.default || p.model || '—'}</span>` : `<span class="muted">${p.model || '—'}</span>`}</td>
+      <td class="muted" style="font-family:monospace;font-size:11px">${p.api_key_masked}</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn-muted" style="font-size:11px;padding:2px 8px"
+          onclick="fetchAndPick('${p.name}', this)">
+          ${isActive ? '⚙ Change' : '▶ Activate'}
+        </button>
+        <button class="btn-muted" style="font-size:11px;padding:2px 8px"
+          onclick="testProvider('${p.name}', this)">Test</button>
+        <button class="btn-muted btn-danger" style="font-size:11px;padding:2px 8px"
+          onclick="deleteProvider('${p.name}', this)">✕</button>
+      </td>
+    </tr>`);
+  }
+
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="5" class="muted" style="text-align:center;padding:16px">No providers</td></tr>';
+}
+
+function closeModal() {
+  document.getElementById('model-modal').style.display = 'none';
+}
+
+function showBuiltinPicker(providerName, models) {
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  title.textContent = providerName + ' — Select Model';
+  const activeModel = (_cfg?.model?.provider === providerName) ? _cfg?.model?.default : null;
+  body.innerHTML = `
+    <div style="margin-bottom:10px;font-size:12px;color:var(--muted)">Click a model to set it as active. After switching, restart hermes-gateway to apply.</div>
+    ${models.map(m => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="font-family:monospace;font-size:12px">${m}</span>
+        ${m === activeModel
+          ? '<span class="badge badge-green">current</span>'
+          : `<button class="btn-muted" style="font-size:11px;padding:2px 10px" onclick="setActive('${providerName}','${m}')">Activate</button>`}
+      </div>`).join('')}
+    <div style="margin-top:12px">
+      <div class="field" style="display:flex;gap:8px;align-items:flex-end">
+        <div style="flex:1">
+          <label style="font-size:11px">Custom model name</label>
+          <input id="builtin-custom-model" placeholder="e.g. gemini-2.0-flash-exp" style="width:100%" />
+        </div>
+        <button onclick="setActive('${providerName}', document.getElementById('builtin-custom-model').value.trim())">Use</button>
+      </div>
+    </div>`;
+  document.getElementById('model-modal').style.display = 'flex';
+}
+
+async function fetchAndPick(providerName, btn) {
+  const origText = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  const r = await fetch(`/api/hermes/providers/${encodeURIComponent(providerName)}/test`, {method:'POST'});
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = origText;
+
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  title.textContent = providerName + ' — Select Model';
+
+  if (!d.ok) {
+    body.innerHTML = `<div class="badge badge-red" style="margin-bottom:8px">✕ Failed to fetch models</div>
+      <div class="muted" style="font-size:12px">${d.error || 'HTTP ' + d.status}</div>
+      <div style="margin-top:16px">
+        <div class="field" style="display:flex;gap:8px;align-items:flex-end">
+          <div style="flex:1">
+            <label style="font-size:11px">Enter model name manually</label>
+            <input id="manual-model" placeholder="model-id" style="width:100%" />
+          </div>
+          <button onclick="setActive('${providerName}', document.getElementById('manual-model').value.trim())">Use</button>
+        </div>
+      </div>`;
+    document.getElementById('model-modal').style.display = 'flex';
+    return;
+  }
+
+  const activeModel = (_cfg?.model?.provider === providerName) ? _cfg?.model?.default : null;
+  const models = d.models || [];
+  body.innerHTML = `
+    <div style="margin-bottom:10px;font-size:12px;color:var(--muted)">
+      ${models.length} models available. Click to activate. After switching, restart hermes-gateway to apply.
+    </div>
+    ${models.map(m => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="font-family:monospace;font-size:12px">${m}</span>
+        ${m === activeModel
+          ? '<span class="badge badge-green">current</span>'
+          : `<button class="btn-muted" style="font-size:11px;padding:2px 10px" onclick="setActive('${providerName}','${m}')">Activate</button>`}
+      </div>`).join('')}`;
+  document.getElementById('model-modal').style.display = 'flex';
+}
+
+async function setActive(provider, model) {
+  if (!model) return;
+  const r = await fetch('/api/hermes/active', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({provider, model}),
+  });
+  const d = await r.json();
+  if (d.ok) {
+    closeModal();
+    await loadProviders();
+  } else {
+    alert('Failed: ' + (d.detail || 'error'));
+  }
+}
+
+async function testProvider(name, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  const r = await fetch(`/api/hermes/providers/${encodeURIComponent(name)}/test`, {method:'POST'});
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = 'Test';
+
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  title.textContent = name;
+  if (d.ok) {
+    body.innerHTML = `<div class="badge badge-green" style="margin-bottom:12px">✓ Connected (HTTP ${d.status}) — ${d.models?.length || 0} models</div>`
+      + (d.models?.length
+        ? `<div style="font-size:12px;margin-top:8px">${d.models.map(m=>`<div style="padding:4px 0;border-bottom:1px solid var(--border)">${m}</div>`).join('')}</div>`
+        : '<div class="muted">No models returned</div>');
+  } else {
+    body.innerHTML = `<div class="badge badge-red" style="margin-bottom:8px">✕ Failed</div>
+      <div class="muted" style="font-size:12px">${d.error || 'HTTP ' + d.status}</div>`;
+  }
+  document.getElementById('model-modal').style.display = 'flex';
+}
+
+async function deleteProvider(name, btn) {
+  if (!confirm(`Delete provider "${name}"?`)) return;
+  btn.disabled = true;
+  const r = await fetch(`/api/hermes/providers/${encodeURIComponent(name)}`, {method:'DELETE'});
+  const d = await r.json();
+  if (d.ok) loadProviders();
+  else { btn.disabled = false; alert('Failed: ' + (d.detail || 'error')); }
+}
+
+async function addProvider(e) {
+  e.preventDefault();
+  const msg = document.getElementById('add-msg');
+  const body = {
+    name: document.getElementById('p-name').value.trim(),
+    base_url: document.getElementById('p-url').value.trim(),
+    api_key: document.getElementById('p-key').value.trim(),
+    model: document.getElementById('p-model').value.trim(),
+  };
+  msg.textContent = 'Adding…';
+  msg.style.color = 'var(--muted)';
+  const r = await fetch('/api/hermes/providers', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const d = await r.json();
+  if (d.ok) {
+    msg.textContent = '✓ Added. Restart hermes-gateway to apply.';
+    msg.style.color = 'var(--green)';
+    document.getElementById('p-name').value = '';
+    document.getElementById('p-url').value = '';
+    document.getElementById('p-key').value = '';
+    document.getElementById('p-model').value = '';
+    loadProviders();
+  } else {
+    msg.textContent = '✕ ' + (d.detail || 'Failed');
+    msg.style.color = 'var(--red)';
+  }
+}
+
+// close modal on backdrop click
+document.getElementById('model-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('model-modal')) closeModal();
+});
+
+loadProviders();
+</script>
+{% endblock %}

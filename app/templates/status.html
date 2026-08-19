@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Status — Proxy Dashboard{% endblock %}
+
+{% block head %}
+<script src="/static/chart.min.js"></script>
+{% endblock %}
+
+{% block body %}
+<div class="page-title">Status</div>
+
+{% if expiry_warning %}
+<div class="alert alert-yellow">⚠ {{ expiry_warning }}</div>
+{% endif %}
+{% if quota_warning %}
+<div class="alert alert-yellow">⚠ {{ quota_warning }}</div>
+{% endif %}
+{% if stale_warning %}
+<div class="alert alert-red">✕ {{ stale_warning }}</div>
+{% endif %}
+{% if pending_rules.count > 0 %}
+<div class="alert alert-yellow">⚠ You have {{ pending_rules.count }} rule(s) staged but not applied.
+  <a href="/rules">Apply now →</a></div>
+{% endif %}
+{% if not collector_ok %}
+<div class="alert alert-red">✕ Traffic collector offline — {{ collector_error }}</div>
+{% endif %}
+
+<div class="grid-3">
+  <div class="card">
+    <div class="card-title">sing-box</div>
+    {% if sb_active %}
+    <div class="stat-val ok">Active</div>
+    {% else %}
+    <div class="stat-val err">Down</div>
+    {% endif %}
+    <div class="stat-label">{{ sb_version.version if sb_version else 'n/a' }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Active Profile</div>
+    <div class="stat-val" style="font-size:16px">{{ active_sub.name if active_sub else 'None' }}</div>
+    {% if active_sub and active_sub.expires_at %}
+    <div class="stat-label">Expires {{ active_sub.expires_at | int | strftime }}</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-title">Connections</div>
+    <div class="stat-val" id="conn-count">{{ conn_count }}</div>
+    <div class="stat-label">active right now</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">Live Throughput</div>
+    <div style="position:relative;height:110px"><canvas id="traffic-chart"></canvas></div>
+    <div style="margin-top:8px;display:flex;gap:16px;font-size:11px;color:var(--muted)">
+      <span>↑ <span id="up-rate">—</span></span>
+      <span>↓ <span id="down-rate">—</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Last Health Check</div>
+    {% if health.last_ts %}
+    <div style="font-size:13px;margin-bottom:8px">
+      {% if health.last_ok %}
+      <span class="ok">✓ OK</span>
+      {% else %}
+      <span class="err">✕ Failed</span>
+      {% endif %}
+      <span class="muted" style="margin-left:8px">
+        {{ health.last_latency_ms }}ms
+      </span>
+    </div>
+    <div class="muted" style="font-size:11px">{{ health.last_target }}</div>
+    {% if health.last_error %}
+    <div class="err" style="font-size:11px;margin-top:4px">{{ health.last_error }}</div>
+    {% endif %}
+    <div class="muted" style="font-size:11px;margin-top:4px">DB: {{ db_size }}</div>
+    {% else %}
+    <div class="muted">No probes yet</div>
+    {% endif %}
+    <div style="margin-top:12px">
+      <button onclick="runProbe(this)">Run probe now</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Traffic chart ────────────────────────────────────────────────────────────
+const MAX_POINTS = 60;
+const upData = new Array(MAX_POINTS).fill(0);
+const downData = new Array(MAX_POINTS).fill(0);
+const labels = new Array(MAX_POINTS).fill('');
+
+const ctx = document.getElementById('traffic-chart').getContext('2d');
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      { label: '↑ Up', data: upData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,.1)', borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.3 },
+      { label: '↓ Down', data: downData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,.08)', borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.3 },
+    ],
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { display: false },
+      y: { display: false, min: 0 },
+    },
+  },
+});
+
+function fmtRate(b) {
+  if (b < 1024) return b + ' B/s';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB/s';
+  return (b/1024/1024).toFixed(2) + ' MB/s';
+}
+
+function pushSample(up, down) {
+  upData.shift(); upData.push(up);
+  downData.shift(); downData.push(down);
+  labels.shift(); labels.push('');
+  chart.update();
+  document.getElementById('up-rate').textContent = fmtRate(up);
+  document.getElementById('down-rate').textContent = fmtRate(down);
+}
+
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${proto}://${location.host}/api/traffic/live`);
+ws.onmessage = e => {
+  const d = JSON.parse(e.data);
+  if (d.type === 'init') {
+    d.ring.slice(-MAX_POINTS).forEach(s => pushSample(s.up, s.down));
+  } else if (d.type === 'traffic') {
+    pushSample(d.up, d.down);
+    document.getElementById('conn-count').textContent = d.connections.length;
+  }
+};
+ws.onclose = () => setTimeout(() => location.reload(), 5000);
+
+async function runProbe(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Probing…';
+  const r = await fetch('/api/health/run', { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false;
+  btn.textContent = 'Run probe now';
+  alert(d.ok ? `✓ ${d.target} — ${d.latency_ms}ms` : `✕ ${d.error}`);
+  location.reload();
+}
+</script>
+{% endblock %}

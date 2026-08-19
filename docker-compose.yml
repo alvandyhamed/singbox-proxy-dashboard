@@ -1,0 +1,33 @@
+services:
+  singbox:
+    image: ghcr.io/sagernet/sing-box:latest
+    container_name: singbox
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    command: run -c /etc/sing-box/config.json
+    volumes:
+      - ./singbox:/etc/sing-box
+      - singbox_cache:/var/lib/sing-box
+
+  dashboard:
+    build: .
+    image: proxy-dashboard:local
+    container_name: proxy-dashboard
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./singbox:/etc/sing-box
+      - ./data:/opt/proxy-dashboard/data
+      - ./app/static:/opt/proxy-dashboard/app/static
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Optional: Hermes AI agent integration
+      # Uncomment and set HERMES_CONFIG_PATH in .env, then mount the file:
+      # - ${HERMES_CONFIG_PATH:-/dev/null}:/opt/hermes/config.yaml:ro
+    depends_on:
+      - singbox
+
+volumes:
+  singbox_cache:

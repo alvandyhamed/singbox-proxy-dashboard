@@ -1,0 +1,32 @@
+# Environment & secrets
+.env
+*.env.local
+
+# Runtime data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Static assets downloaded at build time
+app/static/chart.min.js
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# sing-box generated config (contains subscription servers)
+singbox/config.json
+
+# Editor & OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code local settings
+.claude/

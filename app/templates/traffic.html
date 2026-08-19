@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block title %}Traffic — Proxy Dashboard{% endblock %}
+
+{% block head %}
+<script src="/static/chart.min.js"></script>
+<style>
+.conn-table td { white-space: nowrap; }
+.bar-wrap { background: #21262d; border-radius: 3px; height: 4px; width: 80px; display: inline-block; vertical-align: middle; }
+.bar-fill { background: var(--blue); height: 100%; border-radius: 3px; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page-title">Traffic</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">Server Network — <span id="srv-iface" class="muted" style="font-weight:normal;text-transform:none;letter-spacing:0">detecting…</span></div>
+    <div style="font-size:11px;color:var(--muted);display:flex;gap:16px">
+      <span>↓ <span id="srv-rx">—</span></span>
+      <span>↑ <span id="srv-tx">—</span></span>
+    </div>
+  </div>
+  <div style="position:relative;height:110px"><canvas id="srv-chart"></canvas></div>
+  <details id="container-details" style="margin-top:12px">
+    <summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none" onclick="loadContainerStats()">
+      ▶ Per-container breakdown
+    </summary>
+    <div id="container-stats-body" style="margin-top:10px;overflow-x:auto">
+      <div class="muted" style="font-size:12px;padding:8px 0">Loading…</div>
+    </div>
+  </details>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">Server Traffic Report</div>
+    <div style="display:flex;gap:6px">
+      <button id="rpt-day" class="btn-muted" style="font-size:11px;padding:3px 10px" onclick="loadNetReport('day')">24h</button>
+      <button id="rpt-week" class="btn-muted" style="font-size:11px;padding:3px 10px" onclick="loadNetReport('week')">7d</button>
+      <button id="rpt-month" class="btn-muted" style="font-size:11px;padding:3px 10px" onclick="loadNetReport('month')">30d</button>
+    </div>
+  </div>
+  <div style="overflow-x:auto">
+    <table id="rpt-table">
+      <thead>
+        <tr><th id="rpt-col">Hour</th><th>↓ Download</th><th>↑ Upload</th><th>Total</th></tr>
+      </thead>
+      <tbody id="rpt-body">
+        <tr><td colspan="4" class="muted" style="text-align:center;padding:16px">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="rpt-total" style="margin-top:8px;font-size:12px;color:var(--muted);text-align:right"></div>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">Live Connections</div>
+    <span id="conn-badge" class="badge badge-muted">0 active</span>
+  </div>
+  <div style="overflow-x:auto">
+  <table class="conn-table">
+    <thead>
+      <tr>
+        <th>Host</th>
+        <th>Port</th>
+        <th>Protocol</th>
+        <th>Outbound</th>
+        <th>Rule</th>
+        <th>↑ Up</th>
+        <th>↓ Down</th>
+        <th>Duration</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="conn-body">
+      <tr><td colspan="9" class="muted" style="text-align:center;padding:20px">Waiting for data…</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div style="margin-top:8px;font-size:11px;color:var(--muted)">
+    Rows with an IP instead of a hostname indicate the client resolved DNS locally. Use <code>socks5h://</code> to defer resolution to the proxy.
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">Traffic History (Last 24h by Host)</div>
+    <div style="display:flex;gap:8px">
+      <select id="group-by" onchange="loadHistory()" style="width:auto">
+        <option value="host">By host</option>
+        <option value="hour">By hour</option>
+        <option value="day">By day</option>
+      </select>
+    </div>
+  </div>
+  <div style="position:relative;height:180px;margin-bottom:12px"><canvas id="hist-chart"></canvas></div>
+  <table id="hist-table">
+    <thead>
+      <tr><th id="hist-col-1">Host</th><th>↓ Download</th><th>↑ Upload</th><th>Connections</th></tr>
+    </thead>
+    <tbody id="hist-body">
+      <tr><td colspan="4" class="muted" style="text-align:center;padding:16px">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+const startTimes = {};
+
+function fmtBytes(b) {
+  if (!b) return '0 B';
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1024*1024*1024) return (b/1024/1024).toFixed(2) + ' MB';
+  return (b/1024/1024/1024).toFixed(2) + ' GB';
+}
+
+function fmtDuration(startIso) {
+  const s = (Date.now() - new Date(startIso).getTime()) / 1000;
+  if (s < 60) return Math.round(s) + 's';
+  if (s < 3600) return (s/60).toFixed(0) + 'm';
+  return (s/3600).toFixed(1) + 'h';
+}
+
+function renderConns(conns) {
+  const tbody = document.getElementById('conn-body');
+  document.getElementById('conn-badge').textContent = conns.length + ' active';
+  if (!conns.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;padding:16px">No active connections</td></tr>';
+    return;
+  }
+  tbody.innerHTML = conns.slice(0, 200).map(c => {
+    const host = c.host || `<span class="warn" title="No hostname — client resolved DNS locally">${c.dest_ip}</span>`;
+    const attr = c.host ? '' : ' class="warn"';
+    return `<tr>
+      <td ${attr}>${host}</td>
+      <td>${c.dest_port}</td>
+      <td class="muted">${c.network || '—'}</td>
+      <td><span class="badge badge-blue">${c.node || c.outbound || '—'}</span></td>
+      <td class="muted" style="font-size:11px">${c.rule || '—'}</td>
+      <td>${fmtBytes(c.upload)}</td>
+      <td>${fmtBytes(c.download)}</td>
+      <td class="muted">${c.start ? fmtDuration(c.start) : '—'}</td>
+      <td><button class="btn-muted" style="padding:2px 8px;font-size:11px" onclick="closeConn('${c.id}', this)">✕</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function closeConn(id, btn) {
+  btn.disabled = true;
+  await fetch(`/api/connections/${id}`, { method: 'DELETE' });
+  btn.closest('tr').style.opacity = '0.4';
+}
+
+// WebSocket
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${proto}://${location.host}/api/traffic/live`);
+ws.onmessage = e => {
+  const d = JSON.parse(e.data);
+  if (d.type === 'traffic') renderConns(d.connections || []);
+};
+
+// History chart
+let histChart = null;
+
+async function loadHistory() {
+  const groupBy = document.getElementById('group-by').value;
+  const r = await fetch(`/api/traffic/history?group_by=${groupBy}&limit=50`);
+  const rows = await r.json();
+
+  document.getElementById('hist-col-1').textContent = groupBy === 'host' ? 'Host' : (groupBy === 'hour' ? 'Hour' : 'Day');
+
+  const tbody = document.getElementById('hist-body');
+  const maxDown = Math.max(...rows.map(r => r.down || r.down_bytes || 0), 1);
+
+  tbody.innerHTML = rows.map(r => {
+    const label = r.host || r.hr || r.day;
+    const down = r.down || r.down_bytes || 0;
+    const up = r.up || r.up_bytes || 0;
+    const conns = r.conns || r.conn_count || 0;
+    const pct = Math.min(100, (down / maxDown) * 100);
+    return `<tr>
+      <td>${label || '<span class="muted">unattributed</span>'}</td>
+      <td>${fmtBytes(down)} <div class="bar-wrap"><div class="bar-fill" style="width:${pct}%"></div></div></td>
+      <td>${fmtBytes(up)}</td>
+      <td class="muted">${conns}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">No data</td></tr>';
+
+  // Chart
+  const ctx = document.getElementById('hist-chart').getContext('2d');
+  if (histChart) histChart.destroy();
+  const top = rows.slice(0, 10);
+  histChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top.map(r => (r.host || r.hr || r.day || 'n/a').slice(0, 30)),
+      datasets: [
+        { label: '↓ Down', data: top.map(r => r.down || r.down_bytes || 0), backgroundColor: 'rgba(88,166,255,.5)' },
+        { label: '↑ Up', data: top.map(r => r.up || r.up_bytes || 0), backgroundColor: 'rgba(63,185,80,.4)' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { labels: { color: '#8b949e', font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e', font: { size: 10 }, callback: v => fmtBytes(v) }, grid: { color: '#21262d' } },
+      },
+    },
+  });
+}
+
+loadHistory();
+
+// ─── Server network chart ─────────────────────────────────────────────────────
+const SRV_MAX = 120;
+const srvRx = new Array(SRV_MAX).fill(0);
+const srvTx = new Array(SRV_MAX).fill(0);
+const srvLabels = new Array(SRV_MAX).fill('');
+
+const srvCtx = document.getElementById('srv-chart').getContext('2d');
+const srvChart = new Chart(srvCtx, {
+  type: 'line',
+  data: {
+    labels: srvLabels,
+    datasets: [
+      { label: '↓ RX', data: srvRx, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,.08)', borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.3 },
+      { label: '↑ TX', data: srvTx, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,.06)', borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.3 },
+    ],
+  },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { display: false }, y: { display: false, min: 0 } },
+  },
+});
+
+let _lastSrvTs = 0;
+async function pollSrvNet() {
+  try {
+    const r = await fetch('/api/server/net/ring');
+    const d = await r.json();
+    if (d.iface) document.getElementById('srv-iface').textContent = d.iface;
+    const ring = d.ring || [];
+    // seed the chart on first load
+    if (_lastSrvTs === 0 && ring.length) {
+      ring.slice(-SRV_MAX).forEach(s => {
+        srvRx.shift(); srvRx.push(s.rx);
+        srvTx.shift(); srvTx.push(s.tx);
+        srvLabels.shift(); srvLabels.push('');
+      });
+      srvChart.update();
+    }
+    // append only new samples
+    const newSamples = ring.filter(s => s.ts > _lastSrvTs);
+    newSamples.forEach(s => {
+      srvRx.shift(); srvRx.push(s.rx);
+      srvTx.shift(); srvTx.push(s.tx);
+      srvLabels.shift(); srvLabels.push('');
+      _lastSrvTs = s.ts;
+    });
+    if (newSamples.length) {
+      srvChart.update();
+      const last = ring[ring.length - 1];
+      document.getElementById('srv-rx').textContent = fmtBytes(last.rx) + '/s';
+      document.getElementById('srv-tx').textContent = fmtBytes(last.tx) + '/s';
+    }
+  } catch (e) {}
+}
+pollSrvNet();
+setInterval(pollSrvNet, 2000);
+
+// ─── Container breakdown ──────────────────────────────────────────────────────
+let _containerLoaded = false;
+async function loadContainerStats() {
+  if (_containerLoaded) return;
+  _containerLoaded = true;
+  const body = document.getElementById('container-stats-body');
+  const r = await fetch('/api/server/net/containers');
+  const rows = await r.json();
+  if (!rows.length) {
+    body.innerHTML = '<div class="muted" style="font-size:12px;padding:8px 0">No data yet — collecting stats (updated every 60s)</div>';
+    return;
+  }
+  const maxTotal = Math.max(...rows.map(r => r.rx_total + r.tx_total), 1);
+  body.innerHTML = `<table style="font-size:12px">
+    <thead><tr><th>Container</th><th>↓ RX total</th><th>↑ TX total</th><th>↓ Last min</th><th>↑ Last min</th><th></th></tr></thead>
+    <tbody>${rows.map(r => {
+      const total = r.rx_total + r.tx_total;
+      const pct = Math.min(100, (total / maxTotal) * 100);
+      return `<tr>
+        <td style="font-family:monospace">${r.name}</td>
+        <td>${fmtBytes(r.rx_total)}</td>
+        <td>${fmtBytes(r.tx_total)}</td>
+        <td class="muted">${r.rx_delta ? fmtBytes(r.rx_delta) : '—'}</td>
+        <td class="muted">${r.tx_delta ? fmtBytes(r.tx_delta) : '—'}</td>
+        <td><div class="bar-wrap" style="width:60px"><div class="bar-fill" style="width:${pct}%"></div></div></td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>
+  <div class="muted" style="font-size:11px;margin-top:6px">host-network containers share the server interface and are not listed separately.</div>`;
+}
+
+// ─── Server net report ────────────────────────────────────────────────────────
+let _rptPeriod = 'day';
+async function loadNetReport(period) {
+  _rptPeriod = period;
+  ['day','week','month'].forEach(p => {
+    document.getElementById('rpt-' + p).style.background = p === period ? 'var(--blue)' : '';
+    document.getElementById('rpt-' + p).style.color = p === period ? '#fff' : '';
+  });
+  document.getElementById('rpt-col').textContent = period === 'day' ? 'Hour' : 'Day';
+  const r = await fetch(`/api/server/net/report?period=${period}`);
+  const rows = await r.json();
+  const tbody = document.getElementById('rpt-body');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">No data yet — samples are collected every minute</td></tr>';
+    document.getElementById('rpt-total').textContent = '';
+    return;
+  }
+  let totalRx = 0, totalTx = 0;
+  const maxRx = Math.max(...rows.map(r => r.rx || 0), 1);
+  tbody.innerHTML = rows.map(r => {
+    totalRx += r.rx || 0;
+    totalTx += r.tx || 0;
+    const pct = Math.min(100, ((r.rx || 0) / maxRx) * 100);
+    return `<tr>
+      <td class="muted" style="font-size:11px">${r.period}</td>
+      <td>${fmtBytes(r.rx || 0)} <div class="bar-wrap"><div class="bar-fill" style="width:${pct}%"></div></div></td>
+      <td>${fmtBytes(r.tx || 0)}</td>
+      <td class="muted">${fmtBytes((r.rx || 0) + (r.tx || 0))}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('rpt-total').textContent =
+    `Total: ↓ ${fmtBytes(totalRx)}  ↑ ${fmtBytes(totalTx)}  (${fmtBytes(totalRx + totalTx)} combined)`;
+}
+
+loadNetReport('day');
+</script>
+{% endblock %}

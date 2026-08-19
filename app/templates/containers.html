@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Containers — Proxy Dashboard{% endblock %}
+
+{% block head %}
+<style>
+.net-host { background: rgba(88,166,255,.12); color: var(--blue); }
+.net-bridge { background: rgba(139,148,158,.12); color: var(--muted); }
+.net-none { background: rgba(248,81,73,.12); color: var(--red); }
+.proxy-yes { background: rgba(63,185,80,.12); color: var(--green); }
+.proxy-no { background: rgba(227,179,65,.12); color: var(--yellow); }
+</style>
+{% endblock %}
+
+{% block body %}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+  <div class="page-title" style="margin-bottom:0">Containers</div>
+  <button onclick="loadContainers(this)">↻ Refresh</button>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="card-title">Add Domain to VPN</div>
+  <form class="inline" onsubmit="addToVpn(event)">
+    <div class="field">
+      <label>Kind</label>
+      <select id="rule-kind" style="width:140px">
+        <option value="domain_suffix">domain_suffix</option>
+        <option value="domain">domain</option>
+        <option value="domain_keyword">keyword</option>
+        <option value="ip_cidr">ip_cidr</option>
+      </select>
+    </div>
+    <div class="field" style="flex:1;min-width:200px">
+      <label>Value</label>
+      <input id="rule-value" placeholder="e.g. example.com" />
+    </div>
+    <button type="submit">Add &amp; Apply</button>
+    <span id="rule-msg" style="font-size:12px"></span>
+  </form>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">Docker Containers</div>
+    <div style="font-size:11px;color:var(--muted)">
+      Proxy via host: <code style="color:var(--blue)">http://127.0.0.1:1080</code> &nbsp;|&nbsp;
+      Bridge: <code style="color:var(--blue)">http://172.17.0.1:1080</code>
+    </div>
+  </div>
+  <div style="overflow-x:auto">
+  <table id="container-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Image</th>
+        <th>Status</th>
+        <th>Network</th>
+        <th>VPN Proxy</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="container-body">
+      <tr><td colspan="6" class="muted" style="text-align:center;padding:20px">Loading…</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<script>
+async function loadContainers(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  const r = await fetch('/api/containers');
+  const containers = await r.json();
+  if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+
+  const tbody = document.getElementById('container-body');
+  if (!containers.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">No containers</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = containers.map(c => {
+    const statusBadge = c.status === 'running'
+      ? `<span class="badge badge-green">running</span>`
+      : `<span class="badge badge-muted">${c.status}</span>`;
+
+    const nm = c.network_mode;
+    const netClass = nm === 'host' ? 'net-host' : nm === 'none' ? 'net-none' : 'net-bridge';
+    const netBadge = `<span class="badge ${netClass}">${nm.length > 20 ? nm.slice(0,18)+'…' : nm}</span>`;
+
+    let proxyCell;
+    if (c.proxy) {
+      proxyCell = `<span class="badge proxy-yes" title="${c.proxy}">✓ ${c.proxy.replace('http://','')}</span>`;
+    } else if (nm === 'host') {
+      proxyCell = `<span class="badge net-host" title="host network — use 127.0.0.1:1080">host net</span>`;
+    } else {
+      proxyCell = `<span class="badge proxy-no">no proxy</span>`;
+    }
+
+    const img = c.image.length > 40 ? c.image.slice(0,38)+'…' : c.image;
+
+    return `<tr>
+      <td style="font-weight:500">${c.name}</td>
+      <td class="muted" style="font-size:11px">${img}</td>
+      <td>${statusBadge}</td>
+      <td>${netBadge}</td>
+      <td>${proxyCell}</td>
+      <td>
+        <button class="btn-muted" style="font-size:11px;padding:2px 8px"
+          onclick="prefillRule(this, '${c.name}')">+ Rule</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function prefillRule(btn, name) {
+  document.getElementById('rule-value').value = name;
+  document.getElementById('rule-value').focus();
+}
+
+async function addToVpn(e) {
+  e.preventDefault();
+  const kind = document.getElementById('rule-kind').value;
+  const value = document.getElementById('rule-value').value.trim();
+  const msg = document.getElementById('rule-msg');
+  if (!value) return;
+
+  msg.textContent = 'Adding…';
+  msg.style.color = 'var(--muted)';
+
+  const r1 = await fetch('/api/rules', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({kind, value}),
+  });
+  const d1 = await r1.json();
+  if (!d1.ok) { msg.textContent = '✕ ' + (d1.error || 'Failed'); msg.style.color = 'var(--red)'; return; }
+
+  msg.textContent = 'Applying…';
+  const r2 = await fetch('/api/rules/apply', { method: 'POST' });
+  const d2 = await r2.json();
+
+  if (d2.ok) {
+    msg.textContent = `✓ ${value} added to VPN rules`;
+    msg.style.color = 'var(--green)';
+    document.getElementById('rule-value').value = '';
+  } else {
+    msg.textContent = '✕ ' + (d2.error || 'Apply failed');
+    msg.style.color = 'var(--red)';
+  }
+}
+
+loadContainers();
+</script>
+{% endblock %}

@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Subscriptions — Proxy Dashboard{% endblock %}
+
+{% block body %}
+<div class="page-title">Subscriptions</div>
+
+<div class="card">
+  <div class="card-title">Add Subscription</div>
+  <form class="inline" onsubmit="addSub(event)">
+    <div class="field" style="flex:2;min-width:300px">
+      <label>Subscription URL or share URI (vless://…)</label>
+      <input type="text" id="sub-url" placeholder="https://panel.example.com/sub/token  or  vless://..." autocomplete="off">
+    </div>
+    <div class="field" style="flex:1;min-width:140px">
+      <label>Name (optional)</label>
+      <input type="text" id="sub-name" placeholder="e.g. My VPN">
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button type="submit" id="add-btn">Add &amp; Fetch</button>
+    </div>
+  </form>
+  <div id="add-status" style="margin-top:10px;font-size:12px;display:none"></div>
+</div>
+
+{% for sub in subs %}
+<div class="card" id="sub-{{ sub.id }}">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+    <div>
+      <strong style="font-size:14px">{{ sub.name }}</strong>
+      {% if sub.is_active %}<span class="badge badge-green" style="margin-left:8px">Active</span>{% endif %}
+      {% if sub.last_fetch_ok == 0 %}<span class="badge badge-red" style="margin-left:8px">Last fetch failed</span>{% endif %}
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-muted" onclick="refreshSub({{ sub.id }}, this)">Refresh</button>
+      <button onclick="applySub({{ sub.id }}, this)">Apply (validate + swap)</button>
+      {% if not sub.is_active %}
+      <button class="btn-danger" onclick="deleteSub({{ sub.id }}, this)">Delete</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div style="display:flex;gap:24px;font-size:12px;flex-wrap:wrap">
+    <div>
+      <span class="muted">Provider: </span>
+      <span id="sub-host-{{ sub.id }}">●●●●●●●</span>
+    </div>
+    {% if sub.last_fetch_at %}
+    <div>
+      <span class="muted">Last fetched: </span>
+      <span>{{ sub.last_fetch_via or 'direct' }}</span>
+    </div>
+    {% endif %}
+    {% if sub.update_interval_h %}
+    <div>
+      <span class="muted">Refresh interval: </span>
+      <span>{{ sub.update_interval_h }}h</span>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if sub.quota_total and sub.quota_total > 0 %}
+  {% set used = (sub.quota_upload or 0) + (sub.quota_download or 0) %}
+  {% set pct = [100, (used / sub.quota_total * 100)|int]|min %}
+  <div style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px">
+      <span>Quota: {{ fmt_bytes(used) }} / {{ fmt_bytes(sub.quota_total) }}</span>
+      <span>{{ pct }}%</span>
+    </div>
+    <div style="background:#21262d;border-radius:4px;height:6px">
+      <div style="background:{% if pct >= 90 %}var(--red){% elif pct >= 75 %}var(--yellow){% else %}var(--blue){% endif %};width:{{ pct }}%;height:100%;border-radius:4px;transition:width .3s"></div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if sub.expires_at %}
+  {% set days = ((sub.expires_at - now) // 86400) %}
+  <div style="margin-top:8px;font-size:12px">
+    <span class="muted">Expires: </span>
+    <span class="{% if days < 7 %}warn{% endif %}">{{ days }} day(s)</span>
+  </div>
+  {% endif %}
+
+  <div id="sub-log-{{ sub.id }}" style="margin-top:12px;font-size:12px;display:none"></div>
+</div>
+{% else %}
+<div class="card muted" style="text-align:center;padding:32px">
+  No subscriptions yet. Add one above.
+</div>
+{% endfor %}
+
+<script>
+async function addSub(e) {
+  e.preventDefault();
+  const url = document.getElementById('sub-url').value.trim();
+  const name = document.getElementById('sub-name').value.trim();
+  const btn = document.getElementById('add-btn');
+  const status = document.getElementById('add-status');
+  if (!url) { status.style.display='block'; status.textContent='URL is required'; status.className='err'; return; }
+  btn.disabled = true; btn.textContent = 'Fetching…';
+  status.style.display='block'; status.className='muted'; status.textContent = 'Fetching subscription…';
+  try {
+    const r = await fetch('/api/subs', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({url, name}),
+    });
+    const d = await r.json();
+    if (d.refresh && d.refresh.ok) {
+      const diff = d.refresh.diff;
+      status.className = 'ok';
+      status.textContent = `✓ Added "${d.name}" — ${diff.total} servers (${diff.added} new). Fetched via ${d.refresh.via}.`;
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      status.className = 'err';
+      status.textContent = '✕ ' + ((d.refresh && d.refresh.error) || d.error || 'Unknown error');
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = 'Add & Fetch';
+  }
+}
+
+async function refreshSub(id, btn) {
+  const log = document.getElementById(`sub-log-${id}`);
+  log.style.display = 'block'; log.className = 'muted'; log.textContent = 'Fetching…';
+  btn.disabled = true;
+  const r = await fetch(`/api/subs/${id}/refresh`, { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false;
+  if (d.ok) {
+    const diff = d.diff;
+    log.className = 'ok';
+    log.textContent = `✓ ${diff.total} servers — +${diff.added} added, -${diff.removed} removed. Via ${d.via} using ${d.user_agent}.`;
+    if (diff.warnings && diff.warnings.length) {
+      log.textContent += ` Warnings: ${diff.warnings.slice(0,3).join('; ')}`;
+    }
+  } else {
+    log.className = 'err';
+    log.textContent = '✕ ' + d.error;
+  }
+}
+
+async function applySub(id, btn) {
+  if (!confirm('Apply subscription? This will validate on a staging port, then restart sing-box (drops all connections).')) return;
+  const log = document.getElementById(`sub-log-${id}`);
+  log.style.display = 'block'; log.className = 'muted';
+  const steps = ['Fetching…','Decoding…','Validating staging…','Probing…','Swapping…','Restarting…'];
+  let i = 0;
+  const timer = setInterval(() => { if (i < steps.length) log.textContent = steps[i++]; }, 3000);
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/subs/${id}/apply`, { method: 'POST' });
+    const d = await r.json();
+    clearInterval(timer);
+    if (d.ok) {
+      log.className = 'ok'; log.textContent = '✓ Applied. sing-box restarted.';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      log.className = 'err';
+      log.textContent = '✕ ' + d.error + (d.rolled_back ? '\n⚠ Rolled back to previous config.' : '');
+    }
+  } catch(ex) {
+    clearInterval(timer);
+    log.className = 'err'; log.textContent = '✕ ' + ex;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteSub(id, btn) {
+  if (!confirm('Delete this subscription? Servers and history are kept.')) return;
+  btn.disabled = true;
+  const r = await fetch(`/api/subs/${id}`, { method: 'DELETE' });
+  const d = await r.json();
+  if (d.ok) document.getElementById(`sub-${id}`).remove();
+  else { btn.disabled = false; alert('Failed: ' + (d.detail || 'unknown error')); }
+}
+</script>
+{% endblock %}

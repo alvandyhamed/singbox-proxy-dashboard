@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Servers — Proxy Dashboard{% endblock %}
+
+{% block body %}
+<div class="page-title">Servers</div>
+
+<div class="alert" style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);color:#8b949e;font-size:12px;margin-bottom:16px">
+  ℹ Node switching goes through the Clash API — no restart, no dropped connections.
+  Latency numbers are relative to the urltest probe target, not to the services you depend on.
+</div>
+
+{% if not active_sub %}
+<div class="card muted" style="text-align:center;padding:32px">
+  No active subscription. Go to <a href="/subscriptions">Subscriptions</a> to add and apply one.
+</div>
+{% else %}
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="card-title" style="margin-bottom:0">
+      {{ servers|length }} servers — <span class="muted">{{ active_sub.name }}</span>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-muted" onclick="probeAll(this)">Probe all latency</button>
+      <button class="btn-muted" onclick="setAuto(this)">← Return to auto</button>
+    </div>
+  </div>
+
+  {% if current_pick %}
+  <div style="font-size:12px;margin-bottom:12px">
+    Current pick:
+    {% if current_pick == 'auto' %}
+    <span class="badge badge-green">auto (urltest)</span>
+    {% else %}
+    <span class="badge badge-blue">{{ current_pick }}</span>
+    — <span class="muted">pinned manually</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tag</th><th>Label</th><th>Host</th><th>Protocol</th><th>Latency</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for s in servers %}
+    <tr id="srv-{{ s.outbound_tag }}" {% if s.outbound_tag == current_pick %}style="background:rgba(88,166,255,.05)"{% endif %}>
+      <td style="font-size:11px;font-family:monospace;color:var(--muted)">{{ s.outbound_tag }}</td>
+      <td>
+        {{ s.label or '—' }}
+        {% if s.outbound_tag == current_pick %}
+        <span class="badge badge-blue" style="margin-left:6px">active</span>
+        {% endif %}
+      </td>
+      <td class="muted" style="font-size:11px">{{ s.server_host }}:{{ s.server_port }}</td>
+      <td><span class="badge badge-muted">{{ s.protocol }}</span></td>
+      <td id="lat-{{ s.outbound_tag }}" class="muted">—</td>
+      <td>
+        <div style="display:flex;gap:6px">
+          <button class="btn-muted" style="padding:2px 8px;font-size:11px"
+                  onclick="probeOne('{{ s.outbound_tag }}', this)">Probe</button>
+          <button style="padding:2px 8px;font-size:11px"
+                  onclick="selectNode('{{ s.outbound_tag }}', this)">Pin</button>
+        </div>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="muted" style="text-align:center;padding:20px">No servers in active subscription</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<script>
+async function probeOne(tag, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  const latEl = document.getElementById(`lat-${tag}`);
+  latEl.textContent = '…';
+  const r = await fetch(`/api/servers/${tag}/delay`, { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = 'Probe';
+  if (d.latency === null || d.latency === undefined) {
+    latEl.innerHTML = '<span class="err">failed</span>';
+  } else {
+    const color = d.latency < 200 ? 'var(--green)' : d.latency < 500 ? 'var(--yellow)' : 'var(--red)';
+    latEl.innerHTML = `<span style="color:${color}">${d.latency}ms</span>`;
+  }
+}
+
+async function probeAll(btn) {
+  btn.disabled = true; btn.textContent = 'Probing…';
+  const r = await fetch('/api/servers/delay', { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = 'Probe all latency';
+  for (const [tag, lat] of Object.entries(d)) {
+    const el = document.getElementById(`lat-${tag}`);
+    if (!el) continue;
+    if (lat === null || lat === undefined) {
+      el.innerHTML = '<span class="err">failed</span>';
+    } else {
+      const color = lat < 200 ? 'var(--green)' : lat < 500 ? 'var(--yellow)' : 'var(--red)';
+      el.innerHTML = `<span style="color:${color}">${lat}ms</span>`;
+    }
+  }
+}
+
+async function selectNode(tag, btn) {
+  // Probe first
+  btn.disabled = true; btn.textContent = 'Probing…';
+  const pr = await fetch(`/api/servers/${tag}/delay`, { method: 'POST' });
+  const pd = await pr.json();
+  if (pd.latency === null || pd.latency === undefined) {
+    if (!confirm(`Server "${tag}" did not respond to a probe. Pin it anyway?`)) {
+      btn.disabled = false; btn.textContent = 'Pin'; return;
+    }
+  }
+  btn.textContent = 'Switching…';
+  const r = await fetch(`/api/servers/${tag}/select`, { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = 'Pin';
+  if (d.ok) location.reload();
+  else alert('Switch failed');
+}
+
+async function setAuto(btn) {
+  btn.disabled = true; btn.textContent = 'Switching…';
+  const r = await fetch('/api/servers/auto', { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = '← Return to auto';
+  if (d.ok) location.reload();
+  else alert('Failed');
+}
+
+// Load latencies on page load
+window.addEventListener('DOMContentLoaded', async () => {
+  const r = await fetch('/api/servers');
+  const servers = await r.json();
+  servers.forEach(s => {
+    const el = document.getElementById(`lat-${s.outbound_tag}`);
+    if (!el) return;
+    if (s.latency === null || s.latency === undefined) {
+      el.innerHTML = '<span class="muted">—</span>';
+    } else {
+      const color = s.latency < 200 ? 'var(--green)' : s.latency < 500 ? 'var(--yellow)' : 'var(--red)';
+      el.innerHTML = `<span style="color:${color}">${s.latency}ms</span>`;
+    }
+  });
+});
+</script>
+{% endblock %}
