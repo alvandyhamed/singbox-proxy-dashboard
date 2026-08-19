@@ -56,7 +56,7 @@ A self-hosted web dashboard for managing [sing-box](https://github.com/SagerNet/
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/yourusername/singbox-proxy-dashboard.git
+git clone https://github.com/alvandyhamed/singbox-proxy-dashboard.git
 cd singbox-proxy-dashboard
 
 cp .env.example .env
